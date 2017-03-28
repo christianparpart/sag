@@ -5,6 +5,7 @@
 
 ### Milestone 2
 
+- [ ] HTTP: if one backend fails, try another; up to N times, then return 503.
 - [ ] ability to add/remove service discovery engines at runtime
 - [ ] HTTPS termination
 - [ ] TCP load balancer (least load)
