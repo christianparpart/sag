@@ -10,11 +10,11 @@ reconfiguring the service proxy without a restart.
   - Marathon SSE Event Stream
   - Mesos
   - Consul
-- **Service Gateway Mode**
+- **Service Gateway Modes**
   - UDP load balancing
   - TCP load balancing
   - HTTP load balancing
-- **Service Routing Mode**
+- **Service Routing Modes**
   - by HTTP request Host header
   - by SSL SNI (Server-Name-Indication) extension
 - **Service backends are chosen based on configurable scheduling algorithms**
