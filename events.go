@@ -17,7 +17,7 @@ type AddBackendEvent struct {
 	ServiceId string
 	BackendId string
 	Hostname  string
-	Port      int
+	Port      uint
 }
 
 type RemoveBackendEvent struct {

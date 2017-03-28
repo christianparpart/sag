@@ -17,23 +17,23 @@ import (
 	"github.com/dawanda/go-mesos/marathon"
 )
 
-type ServiceDiscovery interface {
+type Discovery interface {
 	Run()
 	Shutdown()
 }
 
-type MarathonSD struct {
+type DiscoveryMarathon struct {
 	marathonIP   net.IP
-	marathonPort int
+	marathonPort uint
 	sse          *EventSource
 	eventStream  chan<- interface{}
 }
 
-func NewMarathonSD(host net.IP, port int, reconnectDelay time.Duration, eventStream chan<- interface{}) *MarathonSD {
+func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, eventStream chan<- interface{}) *DiscoveryMarathon {
 	url := fmt.Sprintf("http://%v:%v/v2/events", host, port)
 	sse := NewEventSource(url, reconnectDelay)
 
-	sd := &MarathonSD{
+	sd := &DiscoveryMarathon{
 		marathonIP:   host,
 		marathonPort: port,
 		sse:          sse,
@@ -43,37 +43,40 @@ func NewMarathonSD(host net.IP, port int, reconnectDelay time.Duration, eventStr
 	sse.OnError = sd.onError
 	sse.AddEventListener("status_update_event", sd.status_update_event)
 	sse.AddEventListener("health_status_changed_event", sd.health_status_changed_event)
+	sse.OnMessage = func(event, data string) {
+		sd.log(fmt.Sprintf("SSE[%v]: %v", event, data))
+	}
 
 	return sd
 }
 
-func (sd *MarathonSD) String() string {
-	return fmt.Sprintf("MarathonSD<%v>", sd.sse.Url)
+func (sd *DiscoveryMarathon) String() string {
+	return fmt.Sprintf("DiscoveryMarathon<%v>", sd.sse.Url)
 }
 
-func (sd *MarathonSD) Run() {
+func (sd *DiscoveryMarathon) Run() {
 	sd.log("Starting")
 	sd.sse.RunForever()
 }
 
-func (sd *MarathonSD) Shutdown() {
+func (sd *DiscoveryMarathon) Shutdown() {
 	sd.sse.Close()
 }
 
-func (sd *MarathonSD) log(msg string) {
+func (sd *DiscoveryMarathon) log(msg string) {
 	sd.eventStream <- LogEvent{
 		Message: fmt.Sprintf("marathon(%v): %v", sd.sse.Url, msg)}
 }
 
-func (sd *MarathonSD) onOpen() {
+func (sd *DiscoveryMarathon) onOpen() {
 	sd.log("Connected")
 }
 
-func (sd *MarathonSD) onError(message string) {
+func (sd *DiscoveryMarathon) onError(message string) {
 	sd.log("SSE failure. " + message)
 }
 
-func (sd *MarathonSD) status_update_event(data string) {
+func (sd *DiscoveryMarathon) status_update_event(data string) {
 	var event marathon.StatusUpdateEvent
 	err := json.Unmarshal([]byte(data), &event)
 	if err != nil {
@@ -84,24 +87,35 @@ func (sd *MarathonSD) status_update_event(data string) {
 	}
 }
 
-func (sd *MarathonSD) statusUpdateEvent(event *marathon.StatusUpdateEvent) {
+func makeServiceId(appId string, portIndex int, port uint) string {
+	return fmt.Sprintf("%v-%v-%v", appId, portIndex, port)
+}
+
+func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent) {
 	switch event.TaskStatus {
 	case marathon.TaskRunning:
-		// TODO add task, iff no health checks are available
-		for i, _ := range event.Ports {
-			sd.eventStream <- AddBackendEvent{
-				ServiceId: event.AppId,
-				BackendId: event.TaskId,
-				Hostname:  event.Host,
-				Port:      event.Ports[i]}
+		// add task iff no health checks are available
+		app, _ := sd.getMarathonApp(event.AppId)
+		if app != nil && len(app.HealthChecks) == 0 {
+			for portIndex, portDef := range app.PortDefinitions {
+				sd.eventStream <- AddBackendEvent{
+					ServiceId: makeServiceId(event.AppId, portIndex, portDef.Port),
+					BackendId: event.TaskId,
+					Hostname:  event.Host,
+					Port:      portDef.Port}
+			}
 		}
 	case marathon.TaskFinished, marathon.TaskFailed, marathon.TaskKilling, marathon.TaskKilled, marathon.TaskLost:
-		// TODO remove task
-		sd.log(fmt.Sprintf("statusUpdateEvent: remove task %+v", *event))
+		app, _ := sd.getMarathonApp(event.AppId)
+		for portIndex, portDef := range app.PortDefinitions {
+			sd.eventStream <- RemoveBackendEvent{
+				ServiceId: makeServiceId(event.AppId, portIndex, portDef.Port),
+				BackendId: event.TaskId}
+		}
 	}
 }
 
-func (sd *MarathonSD) health_status_changed_event(data string) {
+func (sd *DiscoveryMarathon) health_status_changed_event(data string) {
 	var event marathon.HealthStatusChangedEvent
 	err := json.Unmarshal([]byte(data), &event)
 	if err != nil {
@@ -111,11 +125,25 @@ func (sd *MarathonSD) health_status_changed_event(data string) {
 	}
 }
 
-func (sd *MarathonSD) healthStatusChangedEvent(event *marathon.HealthStatusChangedEvent) {
+func (sd *DiscoveryMarathon) healthStatusChangedEvent(event *marathon.HealthStatusChangedEvent) {
 	// TODO: add/remove tasks
 	if event.Alive {
 		sd.log(fmt.Sprintf("healthStatusChangedEvent: %+v", *event))
 	} else {
 		sd.log(fmt.Sprintf("healthStatusChangedEvent: %+v", *event))
 	}
+}
+
+func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error) {
+	m, err := marathon.NewService(sd.marathonIP, sd.marathonPort)
+	if err != nil {
+		return nil, err
+	}
+
+	app, err := m.GetApp(appID)
+	if err != nil {
+		return nil, err
+	}
+
+	return app, nil
 }

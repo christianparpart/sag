@@ -31,7 +31,7 @@ func (s *HttpService) IsEmpty() bool {
 	return len(s.backends) == 0
 }
 
-func (s *HttpService) AddBackend(id string, host string, port int) {
+func (s *HttpService) AddBackend(id string, host string, port uint) {
 	// XXX only add backend if not already present
 	for _, backend := range s.backends {
 		if backend.id == id {

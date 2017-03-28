@@ -18,12 +18,12 @@ import (
 type HttpBackend struct {
 	id          string
 	host        string
-	port        int
+	port        uint
 	currentLoad int
 	proxy       *httputil.ReverseProxy
 }
 
-func NewHttpBackend(id string, host string, port int) *HttpBackend {
+func NewHttpBackend(id string, host string, port uint) *HttpBackend {
 	target, _ := url.Parse(fmt.Sprintf("http://%v:%v/", host, port))
 	return &HttpBackend{
 		id:    id,

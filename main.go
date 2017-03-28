@@ -18,9 +18,9 @@ import (
 )
 
 type ServiceApplicationGateway struct {
-	ServiceDiscoveries []ServiceDiscovery
-	EventStream        chan interface{}
-	HttpServices       map[string]*HttpService
+	Discoveries  []Discovery
+	EventStream  chan interface{}
+	HttpServices map[string]*HttpService
 }
 
 func (sag *ServiceApplicationGateway) FindHttpServiceById(serviceId string) *HttpService {
@@ -40,8 +40,8 @@ func (sag *ServiceApplicationGateway) FindHttpServiceByHost(host string) *HttpSe
 	return nil
 }
 
-func (sag *ServiceApplicationGateway) Register(sd ServiceDiscovery) {
-	sag.ServiceDiscoveries = append(sag.ServiceDiscoveries, sd)
+func (sag *ServiceApplicationGateway) Register(sd Discovery) {
+	sag.Discoveries = append(sag.Discoveries, sd)
 	go sd.Run()
 }
 
@@ -97,12 +97,12 @@ func main() {
 	}
 
 	// add a service discovery source
-	port := Atoi(os.Getenv("MARATHON_PORT"), 8080)
+	port := uint(Atoi(os.Getenv("MARATHON_PORT"), 8080))
 	host := os.Getenv("MARATHON_IP")
 	if len(host) == 0 {
 		host = "127.0.0.1"
 	}
-	sag.Register(NewMarathonSD(net.ParseIP(host), port, time.Second*1, sag.EventStream))
+	sag.Register(NewDiscoveryMarathon(net.ParseIP(host), port, time.Second*1, sag.EventStream))
 
 	// handle any incoming service discovery events
 	go sag.HandleEvents()
