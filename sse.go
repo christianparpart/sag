@@ -1,3 +1,11 @@
+// This file is part of the "sad" project
+//   <http://github.com/christianparpart/sad>
+//   (c) 2017 Christian Parpart <christian@parpart.family>
+//
+// Licensed under the MIT License (the "License"); you may not use this
+// file except in compliance with the License. You may obtain a copy of
+// the License at: http://opensource.org/licenses/MIT
+
 package main
 
 import (
@@ -115,16 +123,16 @@ func (sse *EventSource) Run() {
 		return
 	}
 
-	if sse.OnOpen != nil {
-		sse.OnOpen()
-	}
-
 	reader := bufio.NewReader(resp.Body)
 
 	var (
 		eventType  string // "event"
 		dataBuffer []byte // "data"
 	)
+
+	if sse.OnOpen != nil {
+		sse.OnOpen()
+	}
 
 	for {
 		line, err := reader.ReadString('\n')

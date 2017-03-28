@@ -1,35 +1,45 @@
+// This file is part of the "sad" project
+//   <http://github.com/christianparpart/sad>
+//   (c) 2017 Christian Parpart <christian@parpart.family>
+//
+// Licensed under the MIT License (the "License"); you may not use this
+// file except in compliance with the License. You may obtain a copy of
+// the License at: http://opensource.org/licenses/MIT
+
 package main
 
 import (
-	"fmt"
 	"net/http"
 )
 
 // HttpService implements Service interface for HTTP services
 type HttpService struct {
-	ServiceId string
-	backends  []*HttpBackend
+	ServiceId        string
+	Host             string
+	backends         []*HttpBackend
+	lastBackendIndex int
 }
 
-type HttpBackend struct {
-	id          string
-	host        string
-	port        int
-	currentLoad int
-}
-
-func NewHttpService(serviceId string) *HttpService {
+func NewHttpService(serviceId string, host string) *HttpService {
 	return &HttpService{
 		ServiceId: serviceId,
+		Host:      host,
 	}
 }
 
+func (s *HttpService) IsEmpty() bool {
+	return len(s.backends) == 0
+}
+
 func (s *HttpService) AddBackend(id string, host string, port int) {
-	s.backends = append(s.backends, &HttpBackend{
-		id:   id,
-		host: host,
-		port: port,
-	})
+	// XXX only add backend if not already present
+	for _, backend := range s.backends {
+		if backend.id == id {
+			return
+		}
+	}
+
+	s.backends = append(s.backends, NewHttpBackend(id, host, port))
 }
 
 func (s *HttpService) RemoveBackend(id string) {
@@ -42,15 +52,22 @@ func (s *HttpService) RemoveBackend(id string) {
 }
 
 func (s *HttpService) SelectBackend() *HttpBackend {
-	return s.backends[0] // TODO: schedule a good backend
-}
-
-func (s *HttpService) Handle(w http.ResponseWriter, r *http.Request) {
-	if backend := s.SelectBackend(); backend != nil {
-		backend.Handle(w, r)
+	if len(s.backends) == 0 {
+		return nil
 	}
+
+	// XXX do simple round-robin for now
+	if s.lastBackendIndex+1 < len(s.backends) {
+		s.lastBackendIndex = s.lastBackendIndex + 1
+	} else {
+		s.lastBackendIndex = 0
+	}
+
+	return s.backends[s.lastBackendIndex]
 }
 
-func (s *HttpBackend) Handle(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "pong\n") // TODO schedule request to a backend, and let it process there
+func (s *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if backend := s.SelectBackend(); backend != nil {
+		backend.ServeHTTP(w, r)
+	}
 }

@@ -1,3 +1,11 @@
+// This file is part of the "sad" project
+//   <http://github.com/christianparpart/sad>
+//   (c) 2017 Christian Parpart <christian@parpart.family>
+//
+// Licensed under the MIT License (the "License"); you may not use this
+// file except in compliance with the License. You may obtain a copy of
+// the License at: http://opensource.org/licenses/MIT
+
 package main
 
 import (
@@ -32,6 +40,7 @@ func NewMarathonSD(host net.IP, port int, reconnectDelay time.Duration, eventStr
 		eventStream:  eventStream}
 
 	sse.OnOpen = sd.onOpen
+	sse.OnError = sd.onError
 	sse.AddEventListener("status_update_event", sd.status_update_event)
 	sse.AddEventListener("health_status_changed_event", sd.health_status_changed_event)
 
@@ -44,7 +53,7 @@ func (sd *MarathonSD) String() string {
 
 func (sd *MarathonSD) Run() {
 	sd.log("Starting")
-	sd.sse.Run()
+	sd.sse.RunForever()
 }
 
 func (sd *MarathonSD) Shutdown() {
