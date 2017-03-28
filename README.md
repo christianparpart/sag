@@ -2,22 +2,22 @@
 
 ### Motivation
 
-Continuously serve HTTP/HTTPS/TCP/UDP applications from the cloud without configuration,
-supporting multiple and different service discovery backends,
+Continuously serve HTTP/HTTPS/TCP/UDP applications from the cloud without
+reconfiguration, supporting multiple and different service discovery backends,
 reconfiguring the service proxy without a restart.
 
-- *Service Discovery Methods*
+- **Service Discovery Methods**
   - Marathon SSE Event Stream
   - Mesos
   - Consul
-- *Service Gateway Mode*s
+- **Service Gateway Mode**
   - UDP load balancing
   - TCP load balancing
   - HTTP load balancing
-- *Service Routing Mode*s
+- **Service Routing Mode**
   - by HTTP request Host header
   - by SSL SNI (Server-Name-Indication) extension
-- *Service backends are chosen based on configurable scheduling algorithms*
+- **Service backends are chosen based on configurable scheduling algorithms**
   - least load
   - round robin
 
