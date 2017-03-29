@@ -32,8 +32,10 @@ func (sag *ServiceApplicationGateway) FindHttpServiceById(serviceId string) *Htt
 
 func (sag *ServiceApplicationGateway) FindHttpServiceByHost(host string) *HttpService {
 	for _, s := range sag.HttpServices {
-		if host == s.Host {
-			return s
+		for _, shost := range s.Hosts {
+			if host == shost {
+				return s
+			}
 		}
 	}
 
@@ -52,7 +54,7 @@ func (sag *ServiceApplicationGateway) HandleEvents() {
 			if _, ok := sag.HttpServices[v.ServiceId]; !ok {
 				sag.HttpServices[v.ServiceId] = &HttpService{
 					ServiceId: v.ServiceId,
-					Host:      v.Host,
+					Hosts:     v.Hosts,
 				}
 			}
 		case AddBackendEvent:
@@ -93,7 +95,8 @@ func (sag *ServiceApplicationGateway) Shutdown() {
 
 func main() {
 	sag := ServiceApplicationGateway{
-		EventStream: make(chan interface{}),
+		EventStream:  make(chan interface{}),
+		HttpServices: make(map[string]*HttpService),
 	}
 
 	// add a service discovery source

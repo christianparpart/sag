@@ -11,6 +11,7 @@ package main
 import (
 	"net"
 	"strconv"
+	"strings"
 )
 
 var resolveMap = make(map[string]string)
@@ -34,4 +35,12 @@ func Atoi(value string, defaultValue int) int {
 	}
 
 	return defaultValue
+}
+
+func makeStringArray(s string) []string {
+	if len(s) == 0 {
+		return []string{}
+	} else {
+		return strings.Split(s, ",")
+	}
 }

@@ -11,10 +11,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
+	"strings"
 	"time"
 
-	"github.com/dawanda/go-mesos/marathon"
+	"github.com/christianparpart/sag/marathon"
 )
 
 const (
@@ -79,6 +81,7 @@ func (sd *DiscoveryMarathon) log(msg string) {
 
 func (sd *DiscoveryMarathon) onOpen() {
 	sd.log("Connected")
+	sd.LoadAllApps()
 }
 
 func (sd *DiscoveryMarathon) onError(message string) {
@@ -96,11 +99,6 @@ func (sd *DiscoveryMarathon) status_update_event(data string) {
 	}
 }
 
-func makeServiceId(app *marathon.App, portIndex int) string {
-	return fmt.Sprintf("%v-%v-%v", app.Id, portIndex,
-		app.PortDefinitions[portIndex].Port)
-}
-
 func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent) {
 	switch event.TaskStatus {
 	case marathon.TaskRunning:
@@ -108,24 +106,25 @@ func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent
 		app, _ := sd.getMarathonApp(event.AppId)
 		if app != nil && len(app.HealthChecks) == 0 {
 			for portIndex, portDef := range app.PortDefinitions {
-				serviceId := makeServiceId(app, portIndex)
+				serviceId := makeServiceId(event.AppId, portIndex)
 				sd.eventStream <- AddHttpServiceEvent{
 					ServiceId: serviceId,
-					Host:      portDef.Labels[LB_VHOST_HTTP],
+					Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
 				}
 				sd.eventStream <- AddBackendEvent{
 					ServiceId: serviceId,
 					BackendId: event.TaskId,
 					Hostname:  event.Host,
-					Port:      portDef.Port}
+					Port:      event.Ports[portIndex],
+				}
 			}
 		}
 	case marathon.TaskFinished, marathon.TaskFailed, marathon.TaskKilling, marathon.TaskKilled, marathon.TaskLost:
-		app, _ := sd.getMarathonApp(event.AppId)
-		for portIndex, _ := range app.PortDefinitions {
+		for portIndex, _ := range event.Ports {
 			sd.eventStream <- RemoveBackendEvent{
-				ServiceId: makeServiceId(app, portIndex),
-				BackendId: event.TaskId}
+				ServiceId: makeServiceId(event.AppId, portIndex),
+				BackendId: event.TaskId,
+			}
 		}
 	}
 }
@@ -141,12 +140,23 @@ func (sd *DiscoveryMarathon) health_status_changed_event(data string) {
 }
 
 func (sd *DiscoveryMarathon) healthStatusChangedEvent(event *marathon.HealthStatusChangedEvent) {
-	// TODO: add/remove tasks
-	if event.Alive {
-		sd.log(fmt.Sprintf("healthStatusChangedEvent: %+v", *event))
-	} else {
-		sd.log(fmt.Sprintf("healthStatusChangedEvent: %+v", *event))
-	}
+	// if event.Alive {
+	// 	for portIndex, _ := range event.Ports {
+	// 		sd.eventStream <- AddBackendEvent{
+	// 			ServiceId: makeServiceId(event.AppId, portIndex),
+	// 			BackendId: event.TaskId,
+	// 			Hostname:  event.Host,
+	// 			Port:      0, //event.Ports[portIndex],
+	// 		}
+	// 	}
+	// } else {
+	// 	for portIndex, _ := range event.Ports {
+	// 		sd.eventStream <- RemoveBackendEvent{
+	// 			ServiceId: makeServiceId(event.AppId, portIndex),
+	// 			BackendId: event.TaskId,
+	// 		}
+	// 	}
+	// }
 }
 
 func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error) {
@@ -161,4 +171,111 @@ func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error)
 	}
 
 	return app, nil
+}
+
+func (sd *DiscoveryMarathon) LoadAllApps() {
+	var apps []*marathon.App
+	var err error
+	for {
+		apps, err = sd.getAllMarathonApps()
+		if err != nil {
+			sd.log(fmt.Sprintf("Failed to load all apps. %v", err.Error()))
+		} else {
+			break
+		}
+	}
+
+	sd.eventStream <- RestoreFromSnapshotEvent{}
+
+	for _, app := range apps {
+		for portIndex, portDef := range app.PortDefinitions {
+			serviceId := makeServiceId(app.Id, portIndex)
+			switch proto := getApplicationProtocol(app, portIndex); proto {
+			case "http":
+				log.Printf("Found %q with proto %q", serviceId, proto)
+				sd.eventStream <- AddHttpServiceEvent{
+					ServiceId: serviceId,
+					Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
+				}
+			case "tcp":
+				sd.log("TODO: protocol: \"tcp\"")
+			case "udp":
+				sd.log("TODO: protocol: \"udp\"")
+			default:
+				sd.log(fmt.Sprintf("Unhandled protocol: %q", proto))
+			}
+			for _, task := range app.Tasks {
+				if task.IsAlive() {
+					sd.eventStream <- AddBackendEvent{
+						ServiceId: serviceId,
+						BackendId: task.Id,
+						Hostname:  task.Host,
+						Port:      task.Ports[portIndex]}
+				}
+			}
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Marathon helpers
+
+func makeServiceId(appId string, portIndex int) string {
+	return fmt.Sprintf("%v-%v", appId, portIndex)
+}
+
+func getApplicationProtocol(app *marathon.App, portIndex int) string {
+	if proto := getHealthCheckProtocol(app, portIndex); len(proto) != 0 {
+		return proto
+	}
+
+	if proto := getTransportProtocol(app, portIndex); len(proto) != 0 {
+		return proto
+	}
+
+	return ""
+}
+
+func getHealthCheckProtocol(app *marathon.App, portIndex int) string {
+	for _, hs := range app.HealthChecks {
+		if hs.PortIndex == portIndex {
+			if strings.HasPrefix(hs.Protocol, "MESOS_") {
+				return strings.ToLower(hs.Protocol[6:])
+			} else {
+				return strings.ToLower(hs.Protocol)
+			}
+		}
+	}
+
+	return ""
+}
+
+func getTransportProtocol(app *marathon.App, portIndex int) string {
+	if portIndex < len(app.PortDefinitions) {
+		return app.PortDefinitions[portIndex].Protocol // already lower-case
+	}
+
+	if app.Container.Docker != nil && portIndex < len(app.Container.Docker.PortMappings) {
+		return strings.ToLower(app.Container.Docker.PortMappings[portIndex].Protocol)
+	}
+
+	if len(app.PortDefinitions) > 0 {
+		return "tcp" // default to TCP if at least one port was exposed (host networking)
+	}
+
+	return "" // no ports exposed
+}
+
+func (sd *DiscoveryMarathon) getAllMarathonApps() ([]*marathon.App, error) {
+	m, err := marathon.NewService(sd.marathonIP, sd.marathonPort)
+	if err != nil {
+		return nil, fmt.Errorf("Could not create new marathon service. %v", err)
+	}
+
+	apps, err := m.GetApps()
+	if err != nil {
+		return nil, fmt.Errorf("Could not get apps. %v", err)
+	}
+
+	return apps, err
 }

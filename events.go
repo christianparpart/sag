@@ -8,9 +8,12 @@
 
 package main
 
+type RestoreFromSnapshotEvent struct {
+}
+
 type AddHttpServiceEvent struct {
 	ServiceId string
-	Host      string
+	Hosts     []string
 }
 
 type AddBackendEvent struct {

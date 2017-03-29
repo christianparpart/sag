@@ -15,15 +15,15 @@ import (
 // HttpService implements Service interface for HTTP services
 type HttpService struct {
 	ServiceId        string
-	Host             string
+	Hosts            []string
 	backends         []*HttpBackend
 	lastBackendIndex int
 }
 
-func NewHttpService(serviceId string, host string) *HttpService {
+func NewHttpService(serviceId string, hosts []string) *HttpService {
 	return &HttpService{
 		ServiceId: serviceId,
-		Host:      host,
+		Hosts:     hosts,
 	}
 }
 
