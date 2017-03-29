@@ -19,20 +19,23 @@ type HttpBackend struct {
 	id          string
 	host        string
 	port        uint
+	alive       bool
 	currentLoad int
 	proxy       *httputil.ReverseProxy
 }
 
-func NewHttpBackend(id string, host string, port uint) *HttpBackend {
+func NewHttpBackend(id string, host string, port uint, alive bool) *HttpBackend {
 	target, _ := url.Parse(fmt.Sprintf("http://%v:%v/", host, port))
 	return &HttpBackend{
 		id:    id,
 		host:  host,
 		port:  port,
+		alive: alive,
 		proxy: httputil.NewSingleHostReverseProxy(target),
 	}
 }
 
 func (backend *HttpBackend) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	// TODO: adjust alive stat, if failed (for up to N seconds, then reset)
 	backend.proxy.ServeHTTP(rw, req)
 }

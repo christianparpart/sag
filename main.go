@@ -59,8 +59,9 @@ func (sag *ServiceApplicationGateway) HandleEvents() {
 			}
 		case AddBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
-				service.AddBackend(v.BackendId, v.Hostname, v.Port)
+				service.AddBackend(v.BackendId, v.Hostname, v.Port, v.Alive)
 			}
+		case HealthStatusChangedEvent:
 		case RemoveBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
 				service.RemoveBackend(v.BackendId)

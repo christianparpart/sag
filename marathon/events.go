@@ -50,23 +50,23 @@ type IpAddr struct {
 }
 */
 type StatusUpdateEvent struct {
-	EventType   string
-	Timestamp   time.Time
-	SlaveId     string
-	TaskId      string
-	TaskStatus  TaskStatus
-	Message     string
-	AppId       string
-	Host        string
-	IpAddresses []IpAddr
-	Ports       []uint
-	Version     string
+	EventType   string     `json:"eventType"`
+	Timestamp   time.Time  `json:"timestamp"`
+	AppId       string     `json:"appId"`
+	TaskId      string     `json:"taskId"`
+	SlaveId     string     `json:"slaveId"`
+	TaskStatus  TaskStatus `json:"taskStatus"`
+	Message     string     `json:"message"`
+	Host        string     `json:"host"`
+	Ports       []uint     `json:"ports"`
+	IpAddresses []IpAddr   `json:"ipAddresses"`
+	Version     string     `json:"version"`
 }
 
 type HealthStatusChangedEvent struct {
-	AppId  string
-	TaskId string
-	Alive  bool
+	AppId  string `json:"appId"`
+	TaskId string `json:"taskId"`
+	Alive  bool   `json:"alive"`
 }
 
 type DeploymentInfoEvent struct {
@@ -109,4 +109,21 @@ type DeploymentStep struct {
 type DeploymentAction struct {
 	Action string `json:"action"`
 	App    string `json:"app"`
+}
+
+type AppTerminatedEvent struct {
+	AppId     string    `json:"appId"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type AddHealthCheckEvent struct {
+	AppId       string      `json:"appId"`
+	Version     time.Time   `json:"version"`
+	HealthCheck HealthCheck `json:"healthCheck"`
+	Timestamp   time.Time   `json:"timestamp"`
+}
+
+type RemoveHealthCheckEvent struct {
+	AppId     string    `json:"appId"`
+	Timestamp time.Time `json:"timestamp"`
 }

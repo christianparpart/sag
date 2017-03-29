@@ -11,7 +11,7 @@ package main
 // Service is an interface, generic enough to cover any kind of network service,
 // providing the ability to add and remove backends.
 type Service interface {
-	AddBackend(id string, host string, port uint)
+	AddBackend(id string, host string, port uint, alive bool)
 	RemoveBackend(id string)
 }
 
@@ -19,4 +19,5 @@ type Backend interface {
 	Name() string
 	Host() string
 	Port() uint
+	Alive() bool
 }

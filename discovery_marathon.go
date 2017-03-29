@@ -36,6 +36,7 @@ type Discovery interface {
 type DiscoveryMarathon struct {
 	marathonIP   net.IP
 	marathonPort uint
+	portsMap     map[string]int
 	sse          *EventSource
 	eventStream  chan<- interface{}
 }
@@ -47,6 +48,7 @@ func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, 
 	sd := &DiscoveryMarathon{
 		marathonIP:   host,
 		marathonPort: port,
+		portsMap:     make(map[string]int),
 		sse:          sse,
 		eventStream:  eventStream}
 
@@ -54,8 +56,16 @@ func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, 
 	sse.OnError = sd.onError
 	sse.AddEventListener("status_update_event", sd.status_update_event)
 	sse.AddEventListener("health_status_changed_event", sd.health_status_changed_event)
+	sse.AddEventListener("app_terminated_event", sd.app_terminated_event)
 	sse.OnMessage = func(event, data string) {
-		sd.log(fmt.Sprintf("SSE[%v]: %v", event, data))
+		switch event {
+		case "deployment_info", "deployment_step_success", "deployment_success",
+			"event_stream_attached", "event_stream_detached":
+			sd.log(fmt.Sprintf("SSE[%v] skip event", event))
+			// ignored
+		default:
+			sd.log(fmt.Sprintf("SSE[%v]: %v", event, data))
+		}
 	}
 
 	return sd
@@ -105,18 +115,20 @@ func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent
 		// add task iff no health checks are available
 		app, _ := sd.getMarathonApp(event.AppId)
 		if app != nil && len(app.HealthChecks) == 0 {
-			for portIndex, portDef := range app.PortDefinitions {
-				serviceId := makeServiceId(event.AppId, portIndex)
-				sd.eventStream <- AddHttpServiceEvent{
-					ServiceId: serviceId,
-					Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
-				}
-				sd.eventStream <- AddBackendEvent{
-					ServiceId: serviceId,
-					BackendId: event.TaskId,
-					Hostname:  event.Host,
-					Port:      event.Ports[portIndex],
-				}
+		}
+		for portIndex, portDef := range app.PortDefinitions {
+			serviceId := makeServiceId(event.AppId, portIndex)
+			sd.portsMap[event.AppId] = len(app.PortDefinitions)
+			sd.eventStream <- AddHttpServiceEvent{
+				ServiceId: serviceId,
+				Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
+			}
+			sd.eventStream <- AddBackendEvent{
+				ServiceId: serviceId,
+				BackendId: event.TaskId,
+				Hostname:  event.Host,
+				Port:      event.Ports[portIndex],
+				Alive:     len(app.HealthChecks) == 0,
 			}
 		}
 	case marathon.TaskFinished, marathon.TaskFailed, marathon.TaskKilling, marathon.TaskKilled, marathon.TaskLost:
@@ -140,23 +152,29 @@ func (sd *DiscoveryMarathon) health_status_changed_event(data string) {
 }
 
 func (sd *DiscoveryMarathon) healthStatusChangedEvent(event *marathon.HealthStatusChangedEvent) {
-	// if event.Alive {
-	// 	for portIndex, _ := range event.Ports {
-	// 		sd.eventStream <- AddBackendEvent{
-	// 			ServiceId: makeServiceId(event.AppId, portIndex),
-	// 			BackendId: event.TaskId,
-	// 			Hostname:  event.Host,
-	// 			Port:      0, //event.Ports[portIndex],
-	// 		}
-	// 	}
-	// } else {
-	// 	for portIndex, _ := range event.Ports {
-	// 		sd.eventStream <- RemoveBackendEvent{
-	// 			ServiceId: makeServiceId(event.AppId, portIndex),
-	// 			BackendId: event.TaskId,
-	// 		}
-	// 	}
-	// }
+	if maxPorts, ok := sd.portsMap[event.AppId]; ok {
+		for portIndex := 0; portIndex < maxPorts; portIndex++ {
+			sd.eventStream <- HealthStatusChangedEvent{
+				ServiceId: makeServiceId(event.AppId, portIndex),
+				BackendId: event.TaskId,
+				Alive:     event.Alive,
+			}
+		}
+	}
+}
+
+func (sd *DiscoveryMarathon) app_terminated_event(data string) {
+	var event marathon.AppTerminatedEvent
+	err := json.Unmarshal([]byte(data), &event)
+	if err != nil {
+		sd.log(fmt.Sprintf("Failed to unmarshal app_terminated_event. %v\n", err))
+	} else {
+		sd.appTerminatedEvent(&event)
+	}
+}
+
+func (sd *DiscoveryMarathon) appTerminatedEvent(event *marathon.AppTerminatedEvent) {
+	sd.log(fmt.Sprintf("Application terminated. %v", event.AppId))
 }
 
 func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error) {
@@ -188,6 +206,7 @@ func (sd *DiscoveryMarathon) LoadAllApps() {
 	sd.eventStream <- RestoreFromSnapshotEvent{}
 
 	for _, app := range apps {
+		sd.portsMap[app.Id] = len(app.PortDefinitions)
 		for portIndex, portDef := range app.PortDefinitions {
 			serviceId := makeServiceId(app.Id, portIndex)
 			switch proto := getApplicationProtocol(app, portIndex); proto {
@@ -198,9 +217,9 @@ func (sd *DiscoveryMarathon) LoadAllApps() {
 					Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
 				}
 			case "tcp":
-				sd.log("TODO: protocol: \"tcp\"")
+				sd.log("TODO: protocol: tcp")
 			case "udp":
-				sd.log("TODO: protocol: \"udp\"")
+				sd.log("TODO: protocol: udp")
 			default:
 				sd.log(fmt.Sprintf("Unhandled protocol: %q", proto))
 			}

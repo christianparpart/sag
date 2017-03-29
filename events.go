@@ -21,11 +21,18 @@ type AddBackendEvent struct {
 	BackendId string
 	Hostname  string
 	Port      uint
+	Alive     bool
 }
 
 type RemoveBackendEvent struct {
 	ServiceId string
 	BackendId string
+}
+
+type HealthStatusChangedEvent struct {
+	ServiceId string
+	BackendId string
+	Alive     bool
 }
 
 type LogEvent struct {
