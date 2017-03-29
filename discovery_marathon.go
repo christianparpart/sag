@@ -17,6 +17,15 @@ import (
 	"github.com/dawanda/go-mesos/marathon"
 )
 
+const (
+	LB_PROXY_PROTOCOL      = "lb-proxy-protocol"
+	LB_ACCEPT_PROXY        = "lb-accept-proxy"
+	LB_VHOST_HTTP          = "lb-vhost"
+	LB_VHOST_DEFAULT_HTTP  = "lb-vhost-default"
+	LB_VHOST_HTTPS         = "lb-vhost-ssl"
+	LB_VHOST_DEFAULT_HTTPS = "lb-vhost-default-ssl"
+)
+
 type Discovery interface {
 	Run()
 	Shutdown()
@@ -87,8 +96,9 @@ func (sd *DiscoveryMarathon) status_update_event(data string) {
 	}
 }
 
-func makeServiceId(appId string, portIndex int, port uint) string {
-	return fmt.Sprintf("%v-%v-%v", appId, portIndex, port)
+func makeServiceId(app *marathon.App, portIndex int) string {
+	return fmt.Sprintf("%v-%v-%v", app.Id, portIndex,
+		app.PortDefinitions[portIndex].Port)
 }
 
 func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent) {
@@ -98,8 +108,13 @@ func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent
 		app, _ := sd.getMarathonApp(event.AppId)
 		if app != nil && len(app.HealthChecks) == 0 {
 			for portIndex, portDef := range app.PortDefinitions {
+				serviceId := makeServiceId(app, portIndex)
+				sd.eventStream <- AddHttpServiceEvent{
+					ServiceId: serviceId,
+					Host:      portDef.Labels[LB_VHOST_HTTP],
+				}
 				sd.eventStream <- AddBackendEvent{
-					ServiceId: makeServiceId(event.AppId, portIndex, portDef.Port),
+					ServiceId: serviceId,
 					BackendId: event.TaskId,
 					Hostname:  event.Host,
 					Port:      portDef.Port}
@@ -107,9 +122,9 @@ func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent
 		}
 	case marathon.TaskFinished, marathon.TaskFailed, marathon.TaskKilling, marathon.TaskKilled, marathon.TaskLost:
 		app, _ := sd.getMarathonApp(event.AppId)
-		for portIndex, portDef := range app.PortDefinitions {
+		for portIndex, _ := range app.PortDefinitions {
 			sd.eventStream <- RemoveBackendEvent{
-				ServiceId: makeServiceId(event.AppId, portIndex, portDef.Port),
+				ServiceId: makeServiceId(app, portIndex),
 				BackendId: event.TaskId}
 		}
 	}
