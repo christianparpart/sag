@@ -1,5 +1,5 @@
-// This file is part of the "sad" project
-//   <http://github.com/christianparpart/sad>
+// This file is part of the "sag" project
+//   <http://github.com/christianparpart/sag>
 //   (c) 2017 Christian Parpart <christian@parpart.family>
 //
 // Licensed under the MIT License (the "License"); you may not use this
