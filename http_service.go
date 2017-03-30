@@ -9,6 +9,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 )
 
@@ -20,7 +21,12 @@ type HttpService struct {
 	lastBackendIndex int
 }
 
+func (s *HttpService) String() string {
+	return s.ServiceId
+}
+
 func NewHttpService(serviceId string, hosts []string) *HttpService {
+	log.Printf("New service HTTP %v", serviceId)
 	return &HttpService{
 		ServiceId: serviceId,
 		Hosts:     hosts,
@@ -40,15 +46,26 @@ func (s *HttpService) AddBackend(id string, host string, port uint, alive bool) 
 	}
 
 	s.backends = append(s.backends, NewHttpBackend(id, host, port, alive))
+	log.Printf("New backend %v for %v", s.backends[len(s.backends)-1], s.ServiceId)
 }
 
 func (s *HttpService) RemoveBackend(id string) {
 	for i, backend := range s.backends {
 		if id == backend.id {
+			log.Printf("Remove backend %v from %v", backend, s)
 			s.backends = append(s.backends[:i], s.backends[i+1:]...)
 			return
 		}
 	}
+}
+
+func (s *HttpService) GetBackendById(id string) *HttpBackend {
+	for _, backend := range s.backends {
+		if backend.id == id {
+			return backend
+		}
+	}
+	return nil
 }
 
 func (s *HttpService) SelectBackend() *HttpBackend {

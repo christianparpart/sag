@@ -8,12 +8,48 @@
 
 package main
 
+import "fmt"
+
 type RestoreFromSnapshotEvent struct {
 }
 
+type Protocol int
+
+const (
+	HTTP Protocol = iota
+	TCP
+	UDP
+)
+
+func (p Protocol) String() string {
+	switch p {
+	case HTTP:
+		return "HTTP"
+	case TCP:
+		return "TCP"
+	case UDP:
+		return "UDP"
+	default:
+		return fmt.Sprintf("<%v>", int(p))
+	}
+}
+
+type AddUdpServiceEvent struct {
+	ServiceId   string
+	ServicePort uint
+}
+
+type AddTcpServiceEvent struct {
+	ServiceId     string
+	ServicePort   uint
+	ProxyProtocol int  // ProxyProtocol version to pass to upstream (0=disabled, 1=v1, 2=v2)
+	AcceptProxy   bool // AcceptProxy indicates whether or not to parse proxy header from clients
+}
+
 type AddHttpServiceEvent struct {
-	ServiceId string
-	Hosts     []string
+	ServiceId   string
+	ServicePort uint
+	Hosts       []string
 }
 
 type AddBackendEvent struct {

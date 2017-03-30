@@ -9,6 +9,7 @@
 package marathon
 
 import "time"
+import "log"
 
 type TaskStatus string
 
@@ -29,26 +30,28 @@ type IpAddr struct {
 	Protocol  string
 }
 
-/*
-{
-	"slaveId":"9e1a18f2-011c-44fe-9715-be1cac1d5f41-S8",
-	"taskId":"production_lovemag_app.03eb79d1-058d-11e6-a243-72491c981fcc",
-	"taskStatus":"TASK_RUNNING",
-	"message":"",
-	"appId":"/production/lovemag/app",
-	"host":"rack2-compute5.datacenter.tld",
-	"ipAddresses": [
-		{
-			"ipAddress":"172.17.0.7",
-			"protocol":"IPv4"
-		}
-	],
-	"ports": [47755],
-	"version":"2016-04-14T12:52:12.465Z",
-	"eventType":"status_update_event",
-	"timestamp":"2016-04-18T17:43:10.580Z"
+type HealthStatus bool
+
+const Healthy HealthStatus = true
+const Unhealthy HealthStatus = false
+
+func (hs HealthStatus) String() string {
+	switch hs {
+	case Healthy:
+		return "Healthy"
+	case Unhealthy:
+		return "Unhealthy"
+	default:
+		log.Panic("The weird happend")
+		return ""
+	}
 }
-*/
+
+type GenericEvent struct {
+	EventType string    `json:"eventType"` // "instance_changed_event"
+	Timestamp time.Time `json:"timestamp"` // "2017-03-30T10:28:45.822Z"
+}
+
 type StatusUpdateEvent struct {
 	EventType   string     `json:"eventType"`
 	Timestamp   time.Time  `json:"timestamp"`
@@ -64,26 +67,26 @@ type StatusUpdateEvent struct {
 }
 
 type HealthStatusChangedEvent struct {
-	AppId  string `json:"appId"`
-	TaskId string `json:"taskId"`
-	Alive  bool   `json:"alive"`
+	AppId  string       `json:"appId"`
+	TaskId string       `json:"taskId"`
+	Alive  HealthStatus `json:"alive"`
 }
 
 type DeploymentInfoEvent struct {
+	*GenericEvent
 	Plan        DeploymentPlan `json:"plan"`
 	CurrentStep DeploymentStep `json:"currentStep"`
-	Timestamp   time.Time      `json:"timestamp"`
 }
 
 type DeploymentSuccessEvent struct {
-	Plan      DeploymentPlan `json:"plan"`
-	Timestamp time.Time      `json:"timestamp"`
+	*GenericEvent
+	Plan DeploymentPlan `json:"plan"`
 }
 
 type DeploymentFailedEvent struct {
-	Id        string         `json:"id"`
-	Plan      DeploymentPlan `json:"plan"`
-	Timestamp time.Time      `json:"timestamp"`
+	*GenericEvent
+	Id   string         `json:"id"`
+	Plan DeploymentPlan `json:"plan"`
 }
 
 type DeploymentPlan struct {
@@ -112,18 +115,58 @@ type DeploymentAction struct {
 }
 
 type AppTerminatedEvent struct {
-	AppId     string    `json:"appId"`
-	Timestamp time.Time `json:"timestamp"`
+	*GenericEvent
+	AppId string `json:"appId"`
 }
 
 type AddHealthCheckEvent struct {
+	*GenericEvent
 	AppId       string      `json:"appId"`
 	Version     time.Time   `json:"version"`
 	HealthCheck HealthCheck `json:"healthCheck"`
-	Timestamp   time.Time   `json:"timestamp"`
 }
 
 type RemoveHealthCheckEvent struct {
-	AppId     string    `json:"appId"`
-	Timestamp time.Time `json:"timestamp"`
+	*GenericEvent
+	AppId string `json:"appId"`
+}
+
+type InstanceChangedEvent struct {
+	*GenericEvent
+	InstanceId     string    `json:"instanceId"`     // "christian-test1.marathon-a64785da-1533-11e7-850f-02421a280e7f"
+	Condition      string    `json:"condition"`      // "Failed", "Created", "Running", "Killed"
+	RunSpecId      string    `json:"runSpecId"`      // "/christian-test1"
+	AgentId        string    `json:"agentId"`        // "15c09a47-86e9-4177-856c-ede35ec02af8-S62"
+	Host           string    `json:"host"`           // "somehost123"
+	RunSpecVersion time.Time `json:"runSpecVersion"` // "2017-03-30T10:27:36.901Z"
+}
+
+type InstanceHealthChangedEvent struct {
+	*GenericEvent
+	InstanceId     string       `json:"instanceId"`
+	RunSpecId      string       `json:"runSpecId"`
+	Health         HealthStatus `json:"health"`
+	RunSpecVersion time.Time    `json:"runSpecVersion"`
+}
+
+//  failed_health_check_event:
+type FailedHealthCheckEvent struct {
+	*GenericEvent
+	AppId       string      `json:"appId"`      // "/christian-test1"
+	InstanceId  string      `json:"instanceId"` // "christian-test1.marathon-aa2ae852-1538-11e7-850f-02421a280e7f",
+	HealthCheck HealthCheck `json:"healthCheck"`
+}
+
+type GroupChangeFailed struct {
+	*GenericEvent
+	GroupId string    `json:"groupId"` // "/infra/monitoring/alertmanager"
+	Reason  string    `json:"reason"`  // "App is locked by one or more deployments. Override with the option '?force=true'. View details at '/v2/deployments/<DEPLOYMENT_ID>'."
+	Version time.Time `json:"version"`
+}
+
+type UnknownInstanceTerminatedEvent struct {
+	*GenericEvent
+	InstanceId string `json:"instanceId"` // "production_infra_docker-registry.marathon-0b35086b-10b1-11e7-a6dd-02429399af65"
+	RunSpecId  string `json:"runSpecId"`  // "/production/infra/docker-registry"
+	Condition  string `json:"condition"`  // "Killed"
 }

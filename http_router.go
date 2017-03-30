@@ -14,20 +14,20 @@ import (
 	"net/http"
 )
 
-type HttpGateway struct {
+type HttpRouter struct {
 	ListenAddr string
 	GetService func(*http.Request) *HttpService
 }
 
-func (gw HttpGateway) Run() {
-	err := http.ListenAndServe(gw.ListenAddr, gw)
+func (router HttpRouter) Run() {
+	err := http.ListenAndServe(router.ListenAddr, router)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (gw HttpGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if service := gw.GetService(r); service != nil {
+func (router HttpRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if service := router.GetService(r); service != nil {
 		service.ServeHTTP(w, r)
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)

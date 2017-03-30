@@ -44,3 +44,12 @@ func makeStringArray(s string) []string {
 		return strings.Split(s, ",")
 	}
 }
+
+func MakeBool(s string) bool {
+	switch s {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
+}

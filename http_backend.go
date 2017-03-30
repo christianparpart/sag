@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -22,6 +23,10 @@ type HttpBackend struct {
 	alive       bool
 	currentLoad int
 	proxy       *httputil.ReverseProxy
+}
+
+func (backend *HttpBackend) String() string {
+	return fmt.Sprintf("%v:%v", backend.host, backend.port)
 }
 
 func NewHttpBackend(id string, host string, port uint, alive bool) *HttpBackend {
@@ -38,4 +43,16 @@ func NewHttpBackend(id string, host string, port uint, alive bool) *HttpBackend 
 func (backend *HttpBackend) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// TODO: adjust alive stat, if failed (for up to N seconds, then reset)
 	backend.proxy.ServeHTTP(rw, req)
+}
+
+func (backend *HttpBackend) SetAlive(alive bool) {
+	if backend.alive != alive {
+		backend.alive = alive
+
+		if alive {
+			log.Printf("Marking backend as alive. %v", backend)
+		} else {
+			log.Printf("Marking backend as dead. %v", backend)
+		}
+	}
 }

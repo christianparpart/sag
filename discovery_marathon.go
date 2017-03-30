@@ -34,11 +34,11 @@ type Discovery interface {
 }
 
 type DiscoveryMarathon struct {
-	marathonIP   net.IP
-	marathonPort uint
-	portsMap     map[string]int
-	sse          *EventSource
-	eventStream  chan<- interface{}
+	marathonIP    net.IP
+	marathonPort  uint
+	portsMapCache map[string]int
+	sse           *EventSource
+	eventStream   chan<- interface{}
 }
 
 func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, eventStream chan<- interface{}) *DiscoveryMarathon {
@@ -46,26 +46,33 @@ func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, 
 	sse := NewEventSource(url, reconnectDelay)
 
 	sd := &DiscoveryMarathon{
-		marathonIP:   host,
-		marathonPort: port,
-		portsMap:     make(map[string]int),
-		sse:          sse,
-		eventStream:  eventStream}
+		marathonIP:    host,
+		marathonPort:  port,
+		portsMapCache: make(map[string]int),
+		sse:           sse,
+		eventStream:   eventStream}
 
 	sse.OnOpen = sd.onOpen
 	sse.OnError = sd.onError
 	sse.AddEventListener("status_update_event", sd.status_update_event)
 	sse.AddEventListener("health_status_changed_event", sd.health_status_changed_event)
+	sse.AddEventListener("instance_health_changed_event", sd.instance_health_changed_event)
 	sse.AddEventListener("app_terminated_event", sd.app_terminated_event)
+	sse.AddEventListener("deployment_info", func(data string) {})
+	sse.AddEventListener("deployment_step_success", func(data string) {})
+	sse.AddEventListener("deployment_success", func(data string) {})
+	sse.AddEventListener("deployment_failed", func(data string) {})
+	sse.AddEventListener("event_stream_attached", func(data string) {})
+	sse.AddEventListener("event_stream_detached", func(data string) {})
+	sse.AddEventListener("api_post_event", func(data string) {})
+	sse.AddEventListener("add_health_check_event", func(data string) {})
+	sse.AddEventListener("remove_health_check_event", func(data string) {})
+	sse.AddEventListener("group_change_success", func(data string) {})
+	sse.AddEventListener("group_change_failed", func(data string) {})
+	sse.AddEventListener("instance_changed_event", func(data string) {})
+	sse.AddEventListener("failed_health_check_event", func(data string) {})
 	sse.OnMessage = func(event, data string) {
-		switch event {
-		case "deployment_info", "deployment_step_success", "deployment_success",
-			"event_stream_attached", "event_stream_detached":
-			sd.log(fmt.Sprintf("SSE[%v] skip event", event))
-			// ignored
-		default:
-			sd.log(fmt.Sprintf("SSE[%v]: %v", event, data))
-		}
+		log.Printf("SSE: unknown event %v: %v", event, data)
 	}
 
 	return sd
@@ -76,7 +83,7 @@ func (sd *DiscoveryMarathon) String() string {
 }
 
 func (sd *DiscoveryMarathon) Run() {
-	sd.log("Starting")
+	log.Printf("Starting Marathon SSE event stream %v:%v", sd.marathonIP, sd.marathonPort)
 	sd.sse.RunForever()
 }
 
@@ -84,45 +91,66 @@ func (sd *DiscoveryMarathon) Shutdown() {
 	sd.sse.Close()
 }
 
-func (sd *DiscoveryMarathon) log(msg string) {
-	sd.eventStream <- LogEvent{
-		Message: fmt.Sprintf("marathon(%v): %v", sd.sse.Url, msg)}
+func (sd *DiscoveryMarathon) RefreshAllApps() {
+	var apps []*marathon.App
+	var err error
+	for {
+		apps, err = sd.getAllMarathonApps()
+		if err != nil {
+			log.Printf("Failed to load all apps. %v", err.Error())
+		} else {
+			break
+		}
+	}
+
+	sd.eventStream <- RestoreFromSnapshotEvent{}
+
+	for _, app := range apps {
+		sd.ensureAppIsPropagated(app)
+	}
+
+	for _, app := range apps {
+		for portIndex, _ := range app.PortDefinitions {
+			serviceId := makeServiceId(app.Id, portIndex)
+			for _, task := range app.Tasks {
+				sd.eventStream <- AddBackendEvent{
+					ServiceId: serviceId,
+					BackendId: task.Id,
+					Hostname:  task.Host,
+					Port:      task.Ports[portIndex],
+					Alive:     task.IsAlive(),
+				}
+			}
+		}
+	}
 }
 
 func (sd *DiscoveryMarathon) onOpen() {
-	sd.log("Connected")
-	sd.LoadAllApps()
+	log.Printf("SSE stream connected")
+	sd.RefreshAllApps()
 }
 
 func (sd *DiscoveryMarathon) onError(message string) {
-	sd.log("SSE failure. " + message)
+	log.Printf("SSE failure. %v", message)
 }
 
 func (sd *DiscoveryMarathon) status_update_event(data string) {
 	var event marathon.StatusUpdateEvent
 	err := json.Unmarshal([]byte(data), &event)
 	if err != nil {
-		sd.log(fmt.Sprintf("Failed to unmarshal status_update_event. %v", err))
-		sd.log(fmt.Sprintf("status_update_event: %+v\n", data))
-	} else {
-		sd.statusUpdateEvent(&event)
+		log.Printf("Failed to unmarshal status_update_event. %v", err)
+		log.Printf("status_update_event: %+v\n", data)
 	}
-}
 
-func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent) {
 	switch event.TaskStatus {
 	case marathon.TaskRunning:
 		// add task iff no health checks are available
 		app, _ := sd.getMarathonApp(event.AppId)
 		if app != nil && len(app.HealthChecks) == 0 {
 		}
-		for portIndex, portDef := range app.PortDefinitions {
+		sd.ensureAppIsPropagated(app)
+		for portIndex, _ := range app.PortDefinitions {
 			serviceId := makeServiceId(event.AppId, portIndex)
-			sd.portsMap[event.AppId] = len(app.PortDefinitions)
-			sd.eventStream <- AddHttpServiceEvent{
-				ServiceId: serviceId,
-				Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
-			}
 			sd.eventStream <- AddBackendEvent{
 				ServiceId: serviceId,
 				BackendId: event.TaskId,
@@ -130,6 +158,10 @@ func (sd *DiscoveryMarathon) statusUpdateEvent(event *marathon.StatusUpdateEvent
 				Port:      event.Ports[portIndex],
 				Alive:     len(app.HealthChecks) == 0,
 			}
+			// XXX we consider the backend already alive when there are no
+			// health-checks defined but ports defined.
+			// If there are health checks defined, Alive is initially set to false, and
+			// a health_status_changed_event to enable itwill follow up to enable it.
 		}
 	case marathon.TaskFinished, marathon.TaskFailed, marathon.TaskKilling, marathon.TaskKilled, marathon.TaskLost:
 		for portIndex, _ := range event.Ports {
@@ -145,36 +177,41 @@ func (sd *DiscoveryMarathon) health_status_changed_event(data string) {
 	var event marathon.HealthStatusChangedEvent
 	err := json.Unmarshal([]byte(data), &event)
 	if err != nil {
-		sd.log(fmt.Sprintf("Failed to unmarshal health_status_changed_event. %v\n", err))
-	} else {
-		sd.healthStatusChangedEvent(&event)
+		log.Printf("Failed to unmarshal health_status_changed_event. %v", err)
+		return
 	}
-}
 
-func (sd *DiscoveryMarathon) healthStatusChangedEvent(event *marathon.HealthStatusChangedEvent) {
-	if maxPorts, ok := sd.portsMap[event.AppId]; ok {
+	if maxPorts, ok := sd.portsMapCache[event.AppId]; ok {
 		for portIndex := 0; portIndex < maxPorts; portIndex++ {
 			sd.eventStream <- HealthStatusChangedEvent{
 				ServiceId: makeServiceId(event.AppId, portIndex),
 				BackendId: event.TaskId,
-				Alive:     event.Alive,
+				Alive:     bool(event.Alive),
 			}
 		}
 	}
+}
+
+func (sd *DiscoveryMarathon) instance_health_changed_event(data string) {
+	var event marathon.InstanceHealthChangedEvent
+	err := json.Unmarshal([]byte(data), &event)
+	if err != nil {
+		log.Printf("Failed to unmarshal instance_health_changed_event. %v\n", err)
+		return
+	}
+
+	// log.Printf("%v: %+v", event.EventType, event)
 }
 
 func (sd *DiscoveryMarathon) app_terminated_event(data string) {
 	var event marathon.AppTerminatedEvent
 	err := json.Unmarshal([]byte(data), &event)
 	if err != nil {
-		sd.log(fmt.Sprintf("Failed to unmarshal app_terminated_event. %v\n", err))
-	} else {
-		sd.appTerminatedEvent(&event)
+		log.Printf("Failed to unmarshal app_terminated_event. %v\n", err)
+		return
 	}
-}
 
-func (sd *DiscoveryMarathon) appTerminatedEvent(event *marathon.AppTerminatedEvent) {
-	sd.log(fmt.Sprintf("Application terminated. %v", event.AppId))
+	log.Printf("Application terminated. %v", event.AppId)
 }
 
 func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error) {
@@ -191,47 +228,33 @@ func (sd *DiscoveryMarathon) getMarathonApp(appID string) (*marathon.App, error)
 	return app, nil
 }
 
-func (sd *DiscoveryMarathon) LoadAllApps() {
-	var apps []*marathon.App
-	var err error
-	for {
-		apps, err = sd.getAllMarathonApps()
-		if err != nil {
-			sd.log(fmt.Sprintf("Failed to load all apps. %v", err.Error()))
-		} else {
-			break
-		}
-	}
+func (sd *DiscoveryMarathon) ensureAppIsPropagated(app *marathon.App) {
+	sd.portsMapCache[app.Id] = len(app.PortDefinitions)
 
-	sd.eventStream <- RestoreFromSnapshotEvent{}
-
-	for _, app := range apps {
-		sd.portsMap[app.Id] = len(app.PortDefinitions)
-		for portIndex, portDef := range app.PortDefinitions {
-			serviceId := makeServiceId(app.Id, portIndex)
-			switch proto := getApplicationProtocol(app, portIndex); proto {
-			case "http":
-				log.Printf("Found %q with proto %q", serviceId, proto)
-				sd.eventStream <- AddHttpServiceEvent{
-					ServiceId: serviceId,
-					Hosts:     makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
-				}
-			case "tcp":
-				sd.log("TODO: protocol: tcp")
-			case "udp":
-				sd.log("TODO: protocol: udp")
-			default:
-				sd.log(fmt.Sprintf("Unhandled protocol: %q", proto))
+	for portIndex, portDef := range app.PortDefinitions {
+		serviceId := makeServiceId(app.Id, portIndex)
+		proto := getApplicationProtocol(app, portIndex)
+		switch proto {
+		case "http":
+			sd.eventStream <- AddHttpServiceEvent{
+				ServiceId:   serviceId,
+				ServicePort: portDef.Port,
+				Hosts:       makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
 			}
-			for _, task := range app.Tasks {
-				if task.IsAlive() {
-					sd.eventStream <- AddBackendEvent{
-						ServiceId: serviceId,
-						BackendId: task.Id,
-						Hostname:  task.Host,
-						Port:      task.Ports[portIndex]}
-				}
+		case "tcp":
+			sd.eventStream <- AddTcpServiceEvent{
+				ServiceId:     serviceId,
+				ServicePort:   portDef.Port,
+				ProxyProtocol: Atoi(portDef.Labels[LB_PROXY_PROTOCOL], 0),
+				AcceptProxy:   MakeBool(portDef.Labels[LB_ACCEPT_PROXY]),
 			}
+		case "udp":
+			sd.eventStream <- AddUdpServiceEvent{
+				ServiceId:   serviceId,
+				ServicePort: portDef.Port,
+			}
+		default:
+			log.Printf("Unhandled protocol: %q", proto)
 		}
 	}
 }

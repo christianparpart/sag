@@ -13,8 +13,9 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"time"
+
+	flag "github.com/ogier/pflag"
 )
 
 type ServiceApplicationGateway struct {
@@ -30,10 +31,10 @@ func (sag *ServiceApplicationGateway) FindHttpServiceById(serviceId string) *Htt
 	return nil
 }
 
-func (sag *ServiceApplicationGateway) FindHttpServiceByHost(host string) *HttpService {
+func (sag *ServiceApplicationGateway) getHttpServiceByHost(r *http.Request) *HttpService {
 	for _, s := range sag.HttpServices {
 		for _, shost := range s.Hosts {
-			if host == shost {
+			if r.Host == shost {
 				return s
 			}
 		}
@@ -42,26 +43,30 @@ func (sag *ServiceApplicationGateway) FindHttpServiceByHost(host string) *HttpSe
 	return nil
 }
 
-func (sag *ServiceApplicationGateway) Register(sd Discovery) {
+func (sag *ServiceApplicationGateway) RegisterDiscovery(sd Discovery) {
 	sag.Discoveries = append(sag.Discoveries, sd)
 	go sd.Run()
 }
 
-func (sag *ServiceApplicationGateway) HandleEvents() {
+func (sag *ServiceApplicationGateway) ProcessEvents() {
 	for {
 		switch v := (<-sag.EventStream).(type) {
+		case RestoreFromSnapshotEvent:
+			log.Printf("Start restoring state from snapshot")
 		case AddHttpServiceEvent:
 			if _, ok := sag.HttpServices[v.ServiceId]; !ok {
-				sag.HttpServices[v.ServiceId] = &HttpService{
-					ServiceId: v.ServiceId,
-					Hosts:     v.Hosts,
-				}
+				sag.HttpServices[v.ServiceId] = NewHttpService(v.ServiceId, v.Hosts)
 			}
 		case AddBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
 				service.AddBackend(v.BackendId, v.Hostname, v.Port, v.Alive)
 			}
 		case HealthStatusChangedEvent:
+			if service := sag.FindHttpServiceById(v.ServiceId); service != nil {
+				if backend := service.GetBackendById(v.BackendId); backend != nil {
+					backend.SetAlive(v.Alive)
+				}
+			}
 		case RemoveBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
 				service.RemoveBackend(v.BackendId)
@@ -77,16 +82,11 @@ func (sag *ServiceApplicationGateway) HandleEvents() {
 	}
 }
 
-func (sag *ServiceApplicationGateway) RunHttpGateway(addr net.IP, port int) {
-	httpGateway := HttpGateway{
+func (sag *ServiceApplicationGateway) RunHttpRouterByHost(addr net.IP, port uint) {
+	HttpRouter{
 		ListenAddr: fmt.Sprintf("%v:%v", addr, port),
-		GetService: sag.getService,
-	}
-	httpGateway.Run()
-}
-
-func (sag *ServiceApplicationGateway) getService(r *http.Request) *HttpService {
-	return sag.FindHttpServiceByHost(r.Host)
+		GetService: sag.getHttpServiceByHost,
+	}.Run()
 }
 
 func (sag *ServiceApplicationGateway) Shutdown() {
@@ -100,18 +100,20 @@ func main() {
 		HttpServices: make(map[string]*HttpService),
 	}
 
+	httpVhostIP := flag.IP("http-vhost-ip", net.ParseIP("0.0.0.0"), "HTTP vhost router bind IP")
+	httpVhostPort := flag.Uint("http-vhost-port", 8080, "HTTP vhost router port number")
+	marathonIP := flag.IP("marathon-ip", net.ParseIP("127.0.0.1"), "Marathon IP address")
+	marathonPort := flag.Uint("marathon-port", 8080, "Marathon port number")
+	flag.Parse()
+
 	// add a service discovery source
-	port := uint(Atoi(os.Getenv("MARATHON_PORT"), 8080))
-	host := os.Getenv("MARATHON_IP")
-	if len(host) == 0 {
-		host = "127.0.0.1"
-	}
-	sag.Register(NewDiscoveryMarathon(net.ParseIP(host), port, time.Second*1, sag.EventStream))
+	sag.RegisterDiscovery(NewDiscoveryMarathon(*marathonIP, *marathonPort, time.Second*1, sag.EventStream))
 
-	// handle any incoming service discovery events
-	go sag.HandleEvents()
+	// add router (HTTP application by-vhost router)
+	go sag.RunHttpRouterByHost(*httpVhostIP, *httpVhostPort)
 
-	sag.RunHttpGateway(net.ParseIP("0.0.0.0"), 8080)
+	// process any incoming service discovery events
+	sag.ProcessEvents()
 
 	sag.Shutdown()
 }

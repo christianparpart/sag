@@ -15,35 +15,15 @@ reconfiguring the service proxy without a restart.
   - TCP load balancing
   - HTTP load balancing
 - **Service Routing Modes**
-  - by HTTP request Host header
-  - by SSL SNI (Server-Name-Indication) extension
+  - by HTTP request Host header on a well known TCP port (80)
+  - by SSL SNI (Server-Name-Indication) extension on a well known TCP port (443)
+  - by HTTP request path, emulating Linkerd-routing, on a well known TCP port (9991)
+  - by service ports (HTTP/HTTPS/TCP/UDP), as provided from service descovery (such as Marathon)
 - **Service backends are chosen based on configurable scheduling algorithms**
-  - least load
-  - round robin
+  - least load scheduler
+  - chance scheduler
+  - round robin scheduler
 
 ### Command Line Options
 
-```
-SAG_SOURCES="marathon1.mesos:8080,marathon2.mesos:8080"
-
-sag [options] -- [list of service discovery endpoints]
-
-    --gateway-http-port=INT
-    --gateway-https-port=INT
--v, --verbose
-
-```
-
-### notes
-```
-- ServiceDiscovery
-  - MarathonSD
-  - MesosSD
-  - ConsulSD
-- Service
-  - TcpService
-  - UdpService
-  - HttpService
-  - HttpsService
-- Backend
-```
+here be dragons
