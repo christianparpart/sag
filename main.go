@@ -9,6 +9,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -19,9 +20,10 @@ import (
 )
 
 type ServiceApplicationGateway struct {
-	Discoveries  []Discovery
-	EventStream  chan interface{}
+	discoveries  []Discovery
+	eventStream  chan interface{}
 	HttpServices map[string]*HttpService
+	HttpRouters  []*HttpRouter
 }
 
 func (sag *ServiceApplicationGateway) FindHttpServiceById(serviceId string) *HttpService {
@@ -44,13 +46,13 @@ func (sag *ServiceApplicationGateway) getHttpServiceByHost(r *http.Request) *Htt
 }
 
 func (sag *ServiceApplicationGateway) RegisterDiscovery(sd Discovery) {
-	sag.Discoveries = append(sag.Discoveries, sd)
+	sag.discoveries = append(sag.discoveries, sd)
 	go sd.Run()
 }
 
 func (sag *ServiceApplicationGateway) ProcessEvents() {
 	for {
-		switch v := (<-sag.EventStream).(type) {
+		switch v := (<-sag.eventStream).(type) {
 		case RestoreFromSnapshotEvent:
 			log.Printf("Start restoring state from snapshot")
 		case AddHttpServiceEvent:
@@ -59,22 +61,28 @@ func (sag *ServiceApplicationGateway) ProcessEvents() {
 			}
 		case AddBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
-				service.AddBackend(v.BackendId, v.Hostname, v.Port, v.Alive)
+				service.AddBackend(v.BackendId, v.Hostname, v.Port, v.Capacity, v.Alive)
 			}
 		case HealthStatusChangedEvent:
 			if service := sag.FindHttpServiceById(v.ServiceId); service != nil {
 				if backend := service.GetBackendById(v.BackendId); backend != nil {
 					backend.SetAlive(v.Alive)
+				} else {
+					log.Printf("health status changed for app %v task %v. Task not found.", v.ServiceId, v.BackendId)
 				}
+			} else {
+				log.Printf("health status changed for app %v task %v. App not found.", v.ServiceId, v.BackendId)
 			}
 		case RemoveBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
 				service.RemoveBackend(v.BackendId)
 				if service.IsEmpty() {
+					log.Printf("Removing empty service %v", service)
+					service.Close()
 					delete(sag.HttpServices, v.ServiceId)
 				}
 			} else {
-				log.Printf("RemoveBackendEvent: %v %v", v.ServiceId, v.BackendId)
+				log.Printf("RemoveBackendEvent: Service not found. %v %v", v.ServiceId, v.BackendId)
 			}
 		case LogEvent:
 			log.Print(v.Message)
@@ -83,31 +91,55 @@ func (sag *ServiceApplicationGateway) ProcessEvents() {
 }
 
 func (sag *ServiceApplicationGateway) RunHttpRouterByHost(addr net.IP, port uint) {
-	HttpRouter{
-		ListenAddr: fmt.Sprintf("%v:%v", addr, port),
-		GetService: sag.getHttpServiceByHost,
-	}.Run()
+	router := NewHttpRouter(fmt.Sprintf("%v:%v", addr, port), sag.getHttpServiceByHost)
+	sag.HttpRouters = append(sag.HttpRouters, router)
+	router.Run()
 }
 
-func (sag *ServiceApplicationGateway) Shutdown() {
-	// TODO: gracefully shutdown
+func (sag *ServiceApplicationGateway) Close() {
+	// XXX gracefully shutdown
 	// stop accepting new sessions, gracefully terminate active sessions
+
+	for _, router := range sag.HttpRouters {
+		router.Close()
+	}
+}
+
+func (sag *ServiceApplicationGateway) DumpHandler(w http.ResponseWriter, r *http.Request) {
+	bytes, err := json.MarshalIndent(sag, "", "  ")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "%v\n", err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(bytes)
+	}
 }
 
 func main() {
-	sag := ServiceApplicationGateway{
-		EventStream:  make(chan interface{}),
-		HttpServices: make(map[string]*HttpService),
-	}
-
 	httpVhostIP := flag.IP("http-vhost-ip", net.ParseIP("0.0.0.0"), "HTTP vhost router bind IP")
 	httpVhostPort := flag.Uint("http-vhost-port", 8080, "HTTP vhost router port number")
 	marathonIP := flag.IP("marathon-ip", net.ParseIP("127.0.0.1"), "Marathon IP address")
 	marathonPort := flag.Uint("marathon-port", 8080, "Marathon port number")
+	debugPort := flag.Uint("debug-port", 0, "Enable Debugg on given TCP port")
 	flag.Parse()
 
+	sag := ServiceApplicationGateway{
+		eventStream:  make(chan interface{}),
+		HttpServices: make(map[string]*HttpService),
+	}
+
+	// enable HTTP debugging interface
+	if *debugPort != 0 {
+		go func() {
+			http.HandleFunc("/", sag.DumpHandler)
+			http.ListenAndServe(fmt.Sprintf(":%v", *debugPort), nil)
+		}()
+	}
+
 	// add a service discovery source
-	sag.RegisterDiscovery(NewDiscoveryMarathon(*marathonIP, *marathonPort, time.Second*1, sag.EventStream))
+	sag.RegisterDiscovery(NewDiscoveryMarathon(*marathonIP, *marathonPort, time.Second*1, sag.eventStream))
 
 	// add router (HTTP application by-vhost router)
 	go sag.RunHttpRouterByHost(*httpVhostIP, *httpVhostPort)
@@ -115,5 +147,5 @@ func main() {
 	// process any incoming service discovery events
 	sag.ProcessEvents()
 
-	sag.Shutdown()
+	sag.Close()
 }

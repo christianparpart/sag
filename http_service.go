@@ -11,80 +11,124 @@ package main
 import (
 	"log"
 	"net/http"
+
+	"github.com/christianparpart/sag/marathon"
 )
 
 // HttpService implements Service interface for HTTP services
 type HttpService struct {
 	ServiceId        string
 	Hosts            []string
-	backends         []*HttpBackend
+	Backends         []*HttpBackend
 	lastBackendIndex int
+	selectBackend    func() *HttpBackend
 }
 
-func (s *HttpService) String() string {
-	return s.ServiceId
+func (service *HttpService) String() string {
+	return service.ServiceId
 }
 
 func NewHttpService(serviceId string, hosts []string) *HttpService {
 	log.Printf("New service HTTP %v", serviceId)
-	return &HttpService{
+
+	service := &HttpService{
 		ServiceId: serviceId,
 		Hosts:     hosts,
+		Backends:  make([]*HttpBackend, 0),
 	}
+
+	service.selectBackend = service.RoundRobinScheduler
+
+	return service
 }
 
-func (s *HttpService) IsEmpty() bool {
-	return len(s.backends) == 0
+func (service *HttpService) Close() {
 }
 
-func (s *HttpService) AddBackend(id string, host string, port uint, alive bool) {
+func (service *HttpService) IsEmpty() bool {
+	return len(service.Backends) == 0
+}
+
+func (service *HttpService) AddBackend(id string, host string, port uint, capacity int, alive bool) {
 	// XXX only add backend if not already present
-	for _, backend := range s.backends {
-		if backend.id == id {
+	for _, backend := range service.Backends {
+		if backend.Id == id {
 			return
 		}
 	}
 
-	s.backends = append(s.backends, NewHttpBackend(id, host, port, alive))
-	log.Printf("New backend %v for %v", s.backends[len(s.backends)-1], s.ServiceId)
+	backend := NewHttpBackend(id, host, port, capacity, alive)
+	service.Backends = append(service.Backends, backend)
+	log.Printf("New backend %v for %v with ID %v (%v)", backend, service.ServiceId, id, marathon.HealthStatus(alive))
 }
 
-func (s *HttpService) RemoveBackend(id string) {
-	for i, backend := range s.backends {
-		if id == backend.id {
-			log.Printf("Remove backend %v from %v", backend, s)
-			s.backends = append(s.backends[:i], s.backends[i+1:]...)
+func (service *HttpService) RemoveBackend(id string) {
+	for i, backend := range service.Backends {
+		if id == backend.Id {
+			log.Printf("Remove backend %v from %v", backend, service)
+			service.Backends = append(service.Backends[:i], service.Backends[i+1:]...)
 			return
 		}
 	}
+	log.Printf("No backend %v found in service %v", id, service)
 }
 
-func (s *HttpService) GetBackendById(id string) *HttpBackend {
-	for _, backend := range s.backends {
-		if backend.id == id {
+func (service *HttpService) GetBackendById(id string) *HttpBackend {
+	for _, backend := range service.Backends {
+		if backend.Id == id {
 			return backend
 		}
 	}
 	return nil
 }
 
-func (s *HttpService) SelectBackend() *HttpBackend {
-	if len(s.backends) == 0 {
+func (service *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if backend := service.selectBackend(); backend != nil {
+		backend.ServeHTTP(w, r)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+}
+
+func (service *HttpService) LeastLoadScheduler() *HttpBackend {
+	i, leastLoaded := service.getFirstRoutableBackend()
+
+	if leastLoaded != nil {
+		for _, backend := range service.Backends[i:] {
+			if backend.CanServe() && backend.CurrentLoad < leastLoaded.CurrentLoad {
+				leastLoaded = backend
+			}
+		}
+	}
+
+	return leastLoaded
+}
+
+func (service *HttpService) RoundRobinScheduler() *HttpBackend {
+	if len(service.Backends) == 0 {
 		return nil
 	}
 
-	// XXX do simple round-robin for now
-	if s.lastBackendIndex+1 < len(s.backends) {
-		s.lastBackendIndex = s.lastBackendIndex + 1
+	if service.lastBackendIndex+1 < len(service.Backends) {
+		service.lastBackendIndex = service.lastBackendIndex + 1
 	} else {
-		s.lastBackendIndex = 0
+		service.lastBackendIndex = 0
 	}
 
-	return s.backends[s.lastBackendIndex]
+	return service.Backends[service.lastBackendIndex]
 }
 
-func (s *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if backend := s.SelectBackend(); backend != nil {
-		backend.ServeHTTP(w, r)
+func (service *HttpService) ChanceScheduler() *HttpBackend {
+	_, backend := service.getFirstRoutableBackend()
+	return backend
+}
+
+func (service *HttpService) getFirstRoutableBackend() (int, *HttpBackend) {
+	for i, backend := range service.Backends {
+		if backend.CanServe() {
+			return i, backend
+		}
 	}
+
+	return len(service.Backends), nil
 }

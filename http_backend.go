@@ -17,42 +17,54 @@ import (
 )
 
 type HttpBackend struct {
-	id          string
-	host        string
-	port        uint
-	alive       bool
-	currentLoad int
+	Id          string
+	Host        string
+	Port        uint
+	Capacity    int
+	CurrentLoad int
+	Alive       bool
+	ServedTotal uint64
 	proxy       *httputil.ReverseProxy
 }
 
-func (backend *HttpBackend) String() string {
-	return fmt.Sprintf("%v:%v", backend.host, backend.port)
-}
-
-func NewHttpBackend(id string, host string, port uint, alive bool) *HttpBackend {
+func NewHttpBackend(id string, host string, port uint, capacity int, alive bool) *HttpBackend {
 	target, _ := url.Parse(fmt.Sprintf("http://%v:%v/", host, port))
 	return &HttpBackend{
-		id:    id,
-		host:  host,
-		port:  port,
-		alive: alive,
-		proxy: httputil.NewSingleHostReverseProxy(target),
+		Id:          id,
+		Host:        host,
+		Port:        port,
+		Capacity:    capacity,
+		CurrentLoad: 0,
+		Alive:       alive,
+		proxy:       httputil.NewSingleHostReverseProxy(target),
 	}
 }
 
 func (backend *HttpBackend) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// TODO: adjust alive stat, if failed (for up to N seconds, then reset)
+
+	backend.ServedTotal++
+	backend.CurrentLoad++
 	backend.proxy.ServeHTTP(rw, req)
+	backend.CurrentLoad--
+}
+
+func (backend *HttpBackend) CanServe() bool {
+	return backend.Alive && (backend.Capacity == 0 || backend.CurrentLoad < backend.Capacity)
 }
 
 func (backend *HttpBackend) SetAlive(alive bool) {
-	if backend.alive != alive {
-		backend.alive = alive
+	if backend.Alive != alive {
+		backend.Alive = alive
 
 		if alive {
-			log.Printf("Marking backend as alive. %v", backend)
+			log.Printf("Backend is alive. %v", backend)
 		} else {
-			log.Printf("Marking backend as dead. %v", backend)
+			log.Printf("Backend is dead. %v", backend)
 		}
 	}
+}
+
+func (backend *HttpBackend) String() string {
+	return fmt.Sprintf("%v:%v", backend.Host, backend.Port)
 }

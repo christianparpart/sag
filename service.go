@@ -8,16 +8,62 @@
 
 package main
 
+import "fmt"
+
+type Protocol int
+
+const (
+	HTTP Protocol = iota
+	TCP
+	UDP
+)
+
+func (p Protocol) String() string {
+	switch p {
+	case HTTP:
+		return "HTTP"
+	case TCP:
+		return "TCP"
+	case UDP:
+		return "UDP"
+	default:
+		return fmt.Sprintf("<%v>", int(p))
+	}
+}
+
+type SchedulerAlgorithm int
+
+const (
+	SchedulerLeastLoad SchedulerAlgorithm = iota
+	SchedulerRoundRobin
+)
+
+func (sa SchedulerAlgorithm) String() string {
+	switch sa {
+	case SchedulerLeastLoad:
+		return "LeastLoad"
+	case SchedulerRoundRobin:
+		return "RoundRobin"
+	default:
+		return fmt.Sprintf("%v", int(sa))
+	}
+}
+
 // Service is an interface, generic enough to cover any kind of network service,
 // providing the ability to add and remove backends.
 type Service interface {
-	AddBackend(id string, host string, port uint, alive bool)
+	AddBackend(id string, host string, port uint, capacity int, alive bool)
 	RemoveBackend(id string)
 }
 
 type Backend interface {
-	Name() string
+	Id() string
+
 	Host() string
 	Port() uint
+
+	GetCurrentLoad() int
+	GetCapacity() int
+
 	Alive() bool
 }

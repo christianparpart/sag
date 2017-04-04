@@ -70,6 +70,8 @@ type HealthCheckResult struct {
 	FirstSuccess        *time.Time
 	LastFailure         *time.Time
 	LastSuccess         *time.Time
+	LastFailureCause    *string
+	InstanceId          string
 }
 
 type ContainerVolume struct {
@@ -117,42 +119,42 @@ type PortDefinition struct {
 }
 
 type App struct {
-	service               *Service
-	Id                    string
-	Cmd                   *string
-	Args                  []string
-	User                  *string
-	Env                   map[string]string
-	PortDefinitions       []PortDefinition
-	Instances             uint
-	Cpus                  float64
-	Mem                   uint
-	Disk                  uint
-	Gpus                  uint
-	Executor              string
-	Constraints           [][]string
-	Uris                  []string
-	Fetch                 []FetchInfo
-	StoreUrls             []string
-	Ports                 []uint
-	RequirePorts          bool
-	BackoffSeconds        uint
-	BackoffFactor         float64
-	MaxLaunchDelaySeconds uint
-	Container             AppContainer
-	HealthChecks          []HealthCheck
-	RedinessChecks        []ReadinessCheck
-	Dependencies          *[]string
-	UpgradeStrategy       UpgradeStrategy
-	Labels                map[string]string
-	Tasks                 []Task
-	AcceptedResourceRoles *[]string
-	IpAddress             *IpAddr
-	Version               time.Time
-	Residency             Residency
-	// "Secrets": {},
+	service                    *Service
+	Id                         string
+	Cmd                        *string
+	Args                       []string
+	User                       *string
+	Env                        map[string]string
+	PortDefinitions            []PortDefinition
+	Instances                  uint
+	Cpus                       float64
+	Mem                        uint
+	Disk                       uint
+	Gpus                       uint
+	Executor                   string
+	Constraints                [][]string
+	Uris                       []string
+	Fetch                      []FetchInfo
+	StoreUrls                  []string
+	RequirePorts               bool
+	BackoffSeconds             uint
+	BackoffFactor              float64
+	MaxLaunchDelaySeconds      uint
+	Container                  AppContainer
+	HealthChecks               []HealthCheck
+	RedinessChecks             []ReadinessCheck
+	Dependencies               *[]string
+	UpgradeStrategy            UpgradeStrategy
+	Labels                     map[string]string
+	Tasks                      []Task
+	AcceptedResourceRoles      *[]string
+	IpAddress                  *IpAddr
+	Version                    time.Time
+	Residency                  Residency
 	TaskKillGracePeriodSeconds *uint
 	VersionInfo                VersionInfo
+	Deprecated_Ports           []uint `json:"ports"`
+	// "Secrets": {},
 }
 
 type Residency struct {
@@ -164,10 +166,22 @@ type VersionInfo struct {
 	LastConfigChangeAt time.Time
 }
 
-func (app *App) GetTaskById(taskId string) *Task {
+func (app *App) GetTaskById(id string) *Task {
 	for i := range app.Tasks {
-		if app.Tasks[i].Id == taskId {
+		if app.Tasks[i].Id == id {
 			return &app.Tasks[i]
+		}
+	}
+
+	return app.GetTaskByInstanceId(id)
+}
+
+func (app *App) GetTaskByInstanceId(instanceId string) *Task {
+	for i := range app.Tasks {
+		for _, check := range app.Tasks[i].HealthCheckResults {
+			if check.InstanceId == instanceId {
+				return &app.Tasks[i]
+			}
 		}
 	}
 

@@ -8,30 +8,7 @@
 
 package main
 
-import "fmt"
-
 type RestoreFromSnapshotEvent struct {
-}
-
-type Protocol int
-
-const (
-	HTTP Protocol = iota
-	TCP
-	UDP
-)
-
-func (p Protocol) String() string {
-	switch p {
-	case HTTP:
-		return "HTTP"
-	case TCP:
-		return "TCP"
-	case UDP:
-		return "UDP"
-	default:
-		return fmt.Sprintf("<%v>", int(p))
-	}
 }
 
 type AddUdpServiceEvent struct {
@@ -57,6 +34,7 @@ type AddBackendEvent struct {
 	BackendId string
 	Hostname  string
 	Port      uint
+	Capacity  int
 	Alive     bool
 }
 

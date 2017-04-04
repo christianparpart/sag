@@ -6,6 +6,9 @@ Continuously serve HTTP/HTTPS/TCP/UDP applications from the cloud without
 reconfiguration, supporting multiple and different service discovery backends,
 reconfiguring the service proxy without a restart.
 
+- self contained (not dependant on other tools it configures to do proxying)
+- no restart required for rediscovery
+
 - **Service Discovery Methods**
   - Marathon SSE Event Stream
   - Mesos
