@@ -28,6 +28,7 @@ const (
 	LB_VHOST_HTTPS         = "lb-vhost-ssl"
 	LB_VHOST_DEFAULT_HTTPS = "lb-vhost-default-ssl"
 	LB_CAPACITY            = "lb-capacity"
+	LB_SCHEDULER           = "lb-scheduler"
 )
 
 type Discovery interface {
@@ -36,11 +37,12 @@ type Discovery interface {
 }
 
 type DiscoveryMarathon struct {
-	marathonIP    net.IP
-	marathonPort  uint
-	portsMapCache map[string]int
-	sse           *EventSource
-	eventStream   chan<- interface{}
+	DefaultScheduler SchedulingAlgorithm
+	marathonIP       net.IP
+	marathonPort     uint
+	portsMapCache    map[string]int
+	sse              *EventSource
+	eventStream      chan<- interface{}
 }
 
 func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, eventStream chan<- interface{}) *DiscoveryMarathon {
@@ -48,11 +50,13 @@ func NewDiscoveryMarathon(host net.IP, port uint, reconnectDelay time.Duration, 
 	sse := NewEventSource(url, reconnectDelay)
 
 	sd := &DiscoveryMarathon{
-		marathonIP:    host,
-		marathonPort:  port,
-		portsMapCache: make(map[string]int),
-		sse:           sse,
-		eventStream:   eventStream}
+		marathonIP:       host,
+		marathonPort:     port,
+		portsMapCache:    make(map[string]int),
+		sse:              sse,
+		eventStream:      eventStream,
+		DefaultScheduler: SchedulerLeastLoad,
+	}
 
 	sse.OnOpen = sd.onOpen
 	sse.OnError = sd.onError
@@ -296,6 +300,14 @@ func (sd *DiscoveryMarathon) addBackend(appId, taskId string) {
 	}
 }
 
+func makeSchedulingAlgorithm(val string, dfl SchedulingAlgorithm) SchedulingAlgorithm {
+	if len(val) == 0 {
+		return dfl
+	} else {
+		return SchedulingAlgorithm(val)
+	}
+}
+
 func (sd *DiscoveryMarathon) removeBackend(appId, taskId string) {
 	if maxPorts, ok := sd.portsMapCache[appId]; ok {
 		for portIndex := 0; portIndex < maxPorts; portIndex++ {
@@ -318,12 +330,14 @@ func (sd *DiscoveryMarathon) ensureAppIsPropagated(app *marathon.App) {
 			sd.eventStream <- AddHttpServiceEvent{
 				ServiceId:   serviceId,
 				ServicePort: portDef.Port,
+				Scheduler:   makeSchedulingAlgorithm(portDef.Labels[LB_SCHEDULER], sd.DefaultScheduler),
 				Hosts:       makeStringArray(portDef.Labels[LB_VHOST_HTTP]),
 			}
 		case "tcp":
 			sd.eventStream <- AddTcpServiceEvent{
 				ServiceId:     serviceId,
 				ServicePort:   portDef.Port,
+				Scheduler:     makeSchedulingAlgorithm(portDef.Labels[LB_SCHEDULER], sd.DefaultScheduler),
 				ProxyProtocol: Atoi(portDef.Labels[LB_PROXY_PROTOCOL], 0),
 				AcceptProxy:   MakeBool(portDef.Labels[LB_ACCEPT_PROXY]),
 			}
@@ -331,6 +345,7 @@ func (sd *DiscoveryMarathon) ensureAppIsPropagated(app *marathon.App) {
 			sd.eventStream <- AddUdpServiceEvent{
 				ServiceId:   serviceId,
 				ServicePort: portDef.Port,
+				Scheduler:   makeSchedulingAlgorithm(portDef.Labels[LB_SCHEDULER], sd.DefaultScheduler),
 			}
 		default:
 			log.Printf("Unhandled protocol: %q", proto)

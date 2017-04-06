@@ -8,17 +8,27 @@
 
 package main
 
+type SchedulingAlgorithm string
+
+const (
+	SchedulerRoundRobin = SchedulingAlgorithm("round-robin")
+	SchedulerLeastLoad  = SchedulingAlgorithm("least-load")
+	SchedulerChance     = SchedulingAlgorithm("chance")
+)
+
 type RestoreFromSnapshotEvent struct {
 }
 
 type AddUdpServiceEvent struct {
 	ServiceId   string
 	ServicePort uint
+	Scheduler   SchedulingAlgorithm
 }
 
 type AddTcpServiceEvent struct {
 	ServiceId     string
 	ServicePort   uint
+	Scheduler     SchedulingAlgorithm
 	ProxyProtocol int  // ProxyProtocol version to pass to upstream (0=disabled, 1=v1, 2=v2)
 	AcceptProxy   bool // AcceptProxy indicates whether or not to parse proxy header from clients
 }
@@ -26,6 +36,7 @@ type AddTcpServiceEvent struct {
 type AddHttpServiceEvent struct {
 	ServiceId   string
 	ServicePort uint
+	Scheduler   SchedulingAlgorithm
 	Hosts       []string
 }
 

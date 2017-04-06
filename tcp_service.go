@@ -6,6 +6,7 @@ import (
 
 type TcpService struct {
 	ServiceId        string
+	Scheduler        SchedulingAlgorithm
 	Backends         []*TcpBackend
 	lastBackendIndex int
 	selectBackend    func() *TcpBackend

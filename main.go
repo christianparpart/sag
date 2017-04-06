@@ -24,6 +24,7 @@ type ServiceApplicationGateway struct {
 	eventStream  chan interface{}
 	HttpServices map[string]*HttpService
 	HttpRouters  []*HttpRouter
+	ServiceIP    net.IP
 }
 
 func (sag *ServiceApplicationGateway) FindHttpServiceById(serviceId string) *HttpService {
@@ -57,7 +58,9 @@ func (sag *ServiceApplicationGateway) ProcessEvents() {
 			log.Printf("Start restoring state from snapshot")
 		case AddHttpServiceEvent:
 			if _, ok := sag.HttpServices[v.ServiceId]; !ok {
-				sag.HttpServices[v.ServiceId] = NewHttpService(v.ServiceId, v.Hosts)
+				service := NewHttpService(v.ServiceId, v.Scheduler, v.Hosts)
+				sag.HttpServices[v.ServiceId] = service
+				sag.runHttpServiceRouter(v.ServicePort, service)
 			}
 		case AddBackendEvent:
 			if service, ok := sag.HttpServices[v.ServiceId]; ok {
@@ -90,8 +93,25 @@ func (sag *ServiceApplicationGateway) ProcessEvents() {
 	}
 }
 
-func (sag *ServiceApplicationGateway) RunHttpRouterByHost(addr net.IP, port uint) {
-	router := NewHttpRouter(fmt.Sprintf("%v:%v", addr, port), sag.getHttpServiceByHost)
+func (sag *ServiceApplicationGateway) runHttpServiceRouter(port uint, service *HttpService) *HttpRouter {
+	for _, router := range sag.HttpRouters {
+		if router.ListenPort == port {
+			return router
+		}
+	}
+
+	getService := func(r *http.Request) *HttpService { return service }
+
+	router := NewHttpRouter(service.ServiceId, sag.ServiceIP, port, getService)
+	sag.HttpRouters = append(sag.HttpRouters, router)
+	go router.Run()
+
+	return router
+}
+
+func (sag *ServiceApplicationGateway) RunHttpVhostRouter(addr net.IP, port uint) {
+	id := fmt.Sprintf("http-vhost-%v", port)
+	router := NewHttpRouter(id, addr, port, sag.getHttpServiceByHost)
 	sag.HttpRouters = append(sag.HttpRouters, router)
 	router.Run()
 }
@@ -123,11 +143,13 @@ func main() {
 	marathonIP := flag.IP("marathon-ip", net.ParseIP("127.0.0.1"), "Marathon IP address")
 	marathonPort := flag.Uint("marathon-port", 8080, "Marathon port number")
 	debugPort := flag.Uint("debug-port", 0, "Enable Debugg on given TCP port")
+	serviceIP := flag.IP("service-ip", net.ParseIP("0.0.0.0"), "IP to bind to for service ports")
 	flag.Parse()
 
 	sag := ServiceApplicationGateway{
 		eventStream:  make(chan interface{}),
 		HttpServices: make(map[string]*HttpService),
+		ServiceIP:    *serviceIP,
 	}
 
 	// enable HTTP debugging interface
@@ -142,7 +164,7 @@ func main() {
 	sag.RegisterDiscovery(NewDiscoveryMarathon(*marathonIP, *marathonPort, time.Second*1, sag.eventStream))
 
 	// add router (HTTP application by-vhost router)
-	go sag.RunHttpRouterByHost(*httpVhostIP, *httpVhostPort)
+	go sag.RunHttpVhostRouter(*httpVhostIP, *httpVhostPort)
 
 	// process any incoming service discovery events
 	sag.ProcessEvents()

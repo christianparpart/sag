@@ -31,24 +31,6 @@ func (p Protocol) String() string {
 	}
 }
 
-type SchedulerAlgorithm int
-
-const (
-	SchedulerLeastLoad SchedulerAlgorithm = iota
-	SchedulerRoundRobin
-)
-
-func (sa SchedulerAlgorithm) String() string {
-	switch sa {
-	case SchedulerLeastLoad:
-		return "LeastLoad"
-	case SchedulerRoundRobin:
-		return "RoundRobin"
-	default:
-		return fmt.Sprintf("%v", int(sa))
-	}
-}
-
 // Service is an interface, generic enough to cover any kind of network service,
 // providing the ability to add and remove backends.
 type Service interface {

@@ -16,21 +16,25 @@ import (
 )
 
 type HttpRouter struct {
-	ListenAddr string
+	Id         string
+	ListenAddr net.IP
+	ListenPort uint
 	listener   net.Listener
 	getService func(*http.Request) *HttpService
 }
 
-func NewHttpRouter(laddr string, getService func(*http.Request) *HttpService) *HttpRouter {
+func NewHttpRouter(id string, addr net.IP, port uint, getService func(*http.Request) *HttpService) *HttpRouter {
 	return &HttpRouter{
-		ListenAddr: laddr,
+		Id:         id,
+		ListenAddr: addr,
+		ListenPort: port,
 		listener:   nil,
 		getService: getService,
 	}
 }
 
 func (router *HttpRouter) Run() {
-	listener, err := net.Listen("tcp", router.ListenAddr)
+	listener, err := net.Listen("tcp", fmt.Sprintf("%v:%v", router.ListenAddr, router.ListenPort))
 	if err != nil {
 		log.Fatal(err)
 	}

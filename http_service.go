@@ -18,6 +18,7 @@ import (
 // HttpService implements Service interface for HTTP services
 type HttpService struct {
 	ServiceId        string
+	Scheduler        SchedulingAlgorithm
 	Hosts            []string
 	Backends         []*HttpBackend
 	lastBackendIndex int
@@ -28,11 +29,12 @@ func (service *HttpService) String() string {
 	return service.ServiceId
 }
 
-func NewHttpService(serviceId string, hosts []string) *HttpService {
+func NewHttpService(serviceId string, Scheduler SchedulingAlgorithm, hosts []string) *HttpService {
 	log.Printf("New service HTTP %v", serviceId)
 
 	service := &HttpService{
 		ServiceId: serviceId,
+		Scheduler: Scheduler,
 		Hosts:     hosts,
 		Backends:  make([]*HttpBackend, 0),
 	}
@@ -91,11 +93,11 @@ func (service *HttpService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (service *HttpService) LeastLoadScheduler() *HttpBackend {
-	i, leastLoaded := service.getFirstRoutableBackend()
+	i, leastLoaded := service.getFirstAvailableBackend()
 
 	if leastLoaded != nil {
 		for _, backend := range service.Backends[i:] {
-			if backend.CanServe() && backend.CurrentLoad < leastLoaded.CurrentLoad {
+			if backend.IsAvailable() && backend.CurrentLoad < leastLoaded.CurrentLoad {
 				leastLoaded = backend
 			}
 		}
@@ -119,13 +121,13 @@ func (service *HttpService) RoundRobinScheduler() *HttpBackend {
 }
 
 func (service *HttpService) ChanceScheduler() *HttpBackend {
-	_, backend := service.getFirstRoutableBackend()
+	_, backend := service.getFirstAvailableBackend()
 	return backend
 }
 
-func (service *HttpService) getFirstRoutableBackend() (int, *HttpBackend) {
+func (service *HttpService) getFirstAvailableBackend() (int, *HttpBackend) {
 	for i, backend := range service.Backends {
-		if backend.CanServe() {
+		if backend.IsAvailable() {
 			return i, backend
 		}
 	}
